@@ -13,6 +13,24 @@ DEFAULT_CURRENCY_SYMBOLS = ['؋', '$', 'ƒ', '៛', '¥', '₡', '₱', '£', '�
 POSITIVE = Decimal('1')
 NEGATIVE = Decimal('-1')
 
+#: Non-ASCII minus and plus characters that may appear in data exported from
+#: financial systems. They are normalized to their ASCII equivalents before the
+#: sign is interpreted so that, for example, ``"−5"`` (U+2212 MINUS SIGN) is
+#: parsed the same as ``"-5"``.
+UNICODE_SIGNS = {
+    0x02D7: 0x002D,  # MODIFIER LETTER MINUS TRIANGULAR
+    0x2052: 0x002D,  # COMMERCIAL MINUS SIGN (a minus sign, not a percent sign)
+    0x207B: 0x002D,  # SUPERSCRIPT MINUS
+    0x208B: 0x002D,  # SUBSCRIPT MINUS
+    0x2212: 0x002D,  # MINUS SIGN
+    0x2796: 0x002D,  # HEAVY MINUS SIGN
+    0xFE63: 0x002D,  # SMALL HYPHEN-MINUS
+    0xFF0D: 0x002D,  # FULLWIDTH HYPHEN-MINUS
+    0xFE62: 0x002B,  # SMALL PLUS SIGN
+    0xFF0B: 0x002B,  # FULLWIDTH PLUS SIGN
+}
+UNICODE_SIGN_TRANSLATION = str.maketrans(UNICODE_SIGNS)
+
 
 class Number(DataType):
     """
@@ -55,6 +73,23 @@ class Number(DataType):
         """
         Cast a single value to a :class:`decimal.Decimal`.
 
+        In addition to plain numbers, grouped numbers and numbers containing
+        currency symbols, strings may use the sign conventions common in
+        financial exports:
+
+        * a leading minus sign, including Unicode minus signs such as
+          ``"−5"`` (U+2212);
+        * a trailing minus or plus sign, such as ``"5-"``;
+        * accounting parentheses, such as ``"(5)"`` or ``"($1,234.56)"``,
+          which denote a negative number.
+
+        Parentheses and an explicit sign are mutually exclusive: values that
+        combine them (such as ``"(-5)"`` or ``"-(5)"``) raise a
+        :class:`.CastError`, because the two notations carry the same sign
+        information and stacking them is ambiguous. Unmatched parentheses and
+        empty parentheses are likewise rejected. A trailing plus sign denotes
+        a positive number, mirroring the trailing minus sign.
+
         :returns:
             :class:`decimal.Decimal` or :code:`None`.
         """
@@ -79,16 +114,47 @@ class Number(DataType):
         if d.lower() in self.null_values:
             return None
 
-        d = d.strip('%')
+        # Normalize Unicode minus and plus signs to their ASCII equivalents.
+        d = d.translate(UNICODE_SIGN_TRANSLATION)
 
-        if len(d) > 0 and d[0] == '-':
-            d = d[1:]
-            sign = NEGATIVE
-        else:
-            sign = POSITIVE
-
+        # Strip currency symbols before interpreting the sign, so that symbols
+        # placed outside the accounting parentheses, e.g. "$(1,234.56)", are
+        # removed too.
         for symbol in self.currency_symbols:
             d = d.strip(symbol)
+
+        d = d.strip()
+
+        sign = POSITIVE
+
+        # Accounting parentheses, e.g. "(1,234.56)" or "($1,234.56)", denote
+        # a negative number. They may not be combined with an explicit sign.
+        parenthesized = d.startswith('(') or d.endswith(')')
+        if parenthesized:
+            if not (d.startswith('(') and d.endswith(')')):
+                raise CastError('Can not parse value "%s" as Decimal.' % d)
+
+            d = d[1:-1].strip()
+
+            if not d or d[0] in '-+' or d[-1] in '-+':
+                raise CastError('Can not parse value "%s" as Decimal.' % d)
+
+            sign = NEGATIVE
+        elif len(d) > 0 and d[0] == '-':
+            d = d[1:]
+            sign = NEGATIVE
+        elif len(d) > 0 and d[-1] in '-+':
+            # Trailing signs, e.g. "5-" or "5+". A trailing plus is positive.
+            if d[-1] == '-':
+                sign = NEGATIVE
+            d = d[:-1].strip()
+
+        # Currency symbols may instead be inside the parentheses, e.g. "($5)".
+        for symbol in self.currency_symbols:
+            d = d.strip(symbol)
+
+        # A percent sign may appear either outside or inside the parentheses.
+        d = d.strip('%')
 
         d = d.replace(self.group_symbol, '')
         d = d.replace(self.decimal_symbol, '.')

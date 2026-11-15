@@ -163,6 +163,100 @@ class TestNumber(unittest.TestCase):
             (Decimal('2.7'), Decimal('-0.7'), Decimal('14'), Decimal('50'), Decimal('-75'), Decimal('-1287'))
         )
 
+    def test_parenthesized_negative_cast(self):
+        values = ('(5)', '(2.7)', '(0)', ' ( 5 ) ', '(100%)')
+        casted = tuple(self.type.cast(v) for v in values)
+        self.assertSequenceEqual(
+            casted,
+            (Decimal('-5'), Decimal('-2.7'), Decimal('0'), Decimal('-5'), Decimal('-100'))
+        )
+
+    def test_parenthesized_negative_grouping_cast(self):
+        values = ('(1,234)', '(1,234.56)', '(200,000,000)', '(1,234.00%)')
+        casted = tuple(self.type.cast(v) for v in values)
+        self.assertSequenceEqual(
+            casted,
+            (Decimal('-1234'), Decimal('-1234.56'), Decimal('-200000000'), Decimal('-1234'))
+        )
+
+    def test_parenthesized_negative_currency_cast(self):
+        # The currency symbol may be either inside or outside the parentheses.
+        values = ('($5)', '($1,234.56)', '$(1,234.56)', '(€14)', '(75¢)', '($1,234.56 )')
+        casted = tuple(self.type.cast(v) for v in values)
+        self.assertSequenceEqual(
+            casted,
+            (
+                Decimal('-5'), Decimal('-1234.56'), Decimal('-1234.56'), Decimal('-14'),
+                Decimal('-75'), Decimal('-1234.56')
+            )
+        )
+
+    def test_trailing_sign_cast(self):
+        values = ('5-', '2.7-', '5+', '2.7+', '5 -', '2.7 +')
+        casted = tuple(self.type.cast(v) for v in values)
+        self.assertSequenceEqual(
+            casted,
+            (Decimal('-5'), Decimal('-2.7'), Decimal('5'), Decimal('2.7'), Decimal('-5'), Decimal('2.7'))
+        )
+
+    def test_trailing_sign_grouping_currency_cast(self):
+        values = ('1,234.56-', '200,000,000-', '$1,234.56-', '75¢-', '1,234.56+')
+        casted = tuple(self.type.cast(v) for v in values)
+        self.assertSequenceEqual(
+            casted,
+            (
+                Decimal('-1234.56'), Decimal('-200000000'), Decimal('-1234.56'),
+                Decimal('-75'), Decimal('1234.56')
+            )
+        )
+
+    def test_unicode_minus_cast(self):
+        # U+2212 MINUS SIGN, U+FF0D FULLWIDTH HYPHEN-MINUS, in both positions.
+        values = ('−5', '−1,234.56', '5−', '1,234.56−', '－5', '5－', '−$1,234.56')
+        casted = tuple(self.type.cast(v) for v in values)
+        self.assertSequenceEqual(
+            casted,
+            (
+                Decimal('-5'), Decimal('-1234.56'), Decimal('-5'), Decimal('-1234.56'),
+                Decimal('-5'), Decimal('-5'), Decimal('-1234.56')
+            )
+        )
+
+    def test_parenthesized_negative_locale(self):
+        # German locale: '.' is the grouping symbol and ',' the decimal symbol.
+        number_type = Number(locale='de_DE.UTF-8')
+        values = ('(1.234,56)', '1.234,56-', '(200.000.000)', '(€1.234,56)')
+        casted = tuple(number_type.cast(v) for v in values)
+        self.assertSequenceEqual(
+            casted,
+            (Decimal('-1234.56'), Decimal('-1234.56'), Decimal('-200000000'), Decimal('-1234.56'))
+        )
+
+    def test_parenthesized_negative_no_leading_zeroes(self):
+        number_type = Number(no_leading_zeroes=True)
+
+        self.assertEqual(number_type.cast('(0.123)'), Decimal('-0.123'))
+        self.assertEqual(number_type.cast('(123)'), Decimal('-123'))
+
+        with self.assertRaises(CastError):
+            number_type.cast('(01)')
+
+    def test_malformed_signs_cast_error(self):
+        # Parentheses and an explicit sign are mutually exclusive.
+        values = (
+            '(-5)', '-(5)', '(5)-', '()', '( )', '(5', '5)', '((5)', '(5))',
+            '+-5', '-', '5+-', '–5', '—5', '5 –', 'quack'
+        )
+        for value in values:
+            with self.assertRaises(CastError, msg=value):
+                self.type.cast(value)
+
+    def test_malformed_unicode_dashes_cast_error(self):
+        # En dash and em dash are not minus signs and must not be accepted.
+        for value in ('–5', '—5', '5–', '5—'):
+            with self.assertRaises(CastError, msg=value):
+                self.type.cast(value)
+
     def test_cast_locale(self):
         values = (2, 1, None, Decimal('2.7'), 'n/a', '2,7', '200.000.000')
         casted = tuple(Number(locale='de_DE.UTF-8').cast(v) for v in values)

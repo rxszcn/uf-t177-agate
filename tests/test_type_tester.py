@@ -75,6 +75,64 @@ class TestTypeTester(unittest.TestCase):
 
         self.assertIsInstance(inferred[0], Number)
 
+    def test_number_parenthesized_negative(self):
+        rows = [
+            ('(1.7)',),
+            ('(200,000,000)',),
+            ('',)
+        ]
+
+        inferred = self.tester.run(rows, ['one'])
+
+        self.assertIsInstance(inferred[0], Number)
+
+    def test_number_parenthesized_currency_negative(self):
+        rows = [
+            ('($1.70)',),
+            ('$(200,000,000.50)',),
+            ('',)
+        ]
+
+        inferred = self.tester.run(rows, ['one'])
+
+        self.assertIsInstance(inferred[0], Number)
+
+    def test_number_trailing_minus(self):
+        rows = [
+            ('1.7-',),
+            ('200,000,000-',),
+            ('',)
+        ]
+
+        inferred = self.tester.run(rows, ['one'])
+
+        self.assertIsInstance(inferred[0], Number)
+
+    def test_number_unicode_minus(self):
+        rows = [
+            ('−1.7',),
+            ('200000000−',),
+            ('',)
+        ]
+
+        inferred = self.tester.run(rows, ['one'])
+
+        self.assertIsInstance(inferred[0], Number)
+
+    def test_number_mixed_sign_notations(self):
+        # A column mixing prefix, trailing and parenthesized negative notations.
+        rows = [
+            ('-1.7',),
+            ('2.8-',),
+            ('(3.9)',),
+            ('4',),
+            ('',)
+        ]
+
+        inferred = self.tester.run(rows, ['one'])
+
+        self.assertIsInstance(inferred[0], Number)
+
     def test_boolean_type(self):
         rows = [
             ('True',),
